@@ -1,4 +1,4 @@
-# STATUS — best-game-01 "Make the best game" — VOID BLOOM, ROUND 2
+# STATUS — best-game-01 "Make the best game" — VOID BLOOM, ROUND 3
 
 ## Format resmi (dari GET https://make.fun/api/competitions/best-game-01/requirements + RULES.txt kit)
 
@@ -98,10 +98,82 @@ node test/browser-stub.mjs   # smoke test boot browser (DOM stub)
 Kontrol: WASD/panah gerak, mouse bidik, tahan mouse/Spasi tembak, **Shift dash**,
 1–3 pilih bloom, P pause, **M mute**. Sentuh: drag untuk gerak, auto-aim + auto-fire.
 
-## Sisa kebutuhan submit round 2 (di luar sesi ini)
+## Round 3 (2026-11-17) — tuning rasa, bukan fitur baru
 
-1. Commit perubahan (`game.js`, `main.ts`, `README.md`, `STATUS.md`) ke repo
-   `rismzz/best-game-01`; ambil SHA-nya.
-2. Bundle transkrip sesi pembangunan round 2 (sesi ini + sesi terkait) dengan kit CLI.
-3. Submit via kit sebagai round 2 sebelum **2026-11-19 01:00 WIB** (kuota harian 5).
-   Tidak ada entry fee.
+Round 2 ter-submit pagi 2026-11-17. Round 3 berangkat dari **diagnostik
+terukur** build round 2 (bot prioritas, telemetri per 10 detik, 8 seed),
+bukan asal tambah konten:
+
+**Kelemahan yang ditemukan di round 2:**
+1. **30 detik pertama paling sepi**: bucket 0–10 dtk rata-rata cuma 1,2 musuh
+   aktif, 16% dead-air; level-up pertama baru di 14–23 dtk.
+2. **Wave 5 jurang frustrasi**: kematian bot menumpuk di boss pertama, dan
+   penyebabnya bukan boss-nya — boss muncul saat arena sudah berisi 23–27
+   musuh, jadi pemain melawan boss + kerumunan sekaligus.
+3. **Boss membosankan di pengulangan**: Dreadnought wave 10/15/20 identik
+   dengan wave 5, hanya HP lebih besar.
+4. **Momen penting tanpa feedback**: combo naik ke ribuan tanpa satu pun
+   pengumuman milestone; jatuh ke 1 HP hanya vignette; boss mati tanpa
+   hitstop.
+
+**Perubahan (semua di `game.js`, deterministik, tanpa draw RNG baru):**
+1. **Hook awal**: `start()` menanam ring pembuka 5 chaser (radius 330,
+   spawnIn 0,35) + surge pertama dimajukan (34 dtk) dan dibuat lebih ramah
+   (5 musuh, radius 430, aktivasi berurutan 1,15 + 0,15×i — surround menutup
+   bertahap, selalu ada celah). Hasil: kill pertama 0,9–1,8 dtk (dari
+   1,9–3,1), level-up pertama 6–7 dtk (dari 14–23), dead-air bucket pertama
+   4,1% (dari 16,1%).
+2. **Fokus boss**: selama Dreadnought hidup, interval trickle ×1,7, surge
+   ditahan (surgeT dijaga ≥ 6), pack larut malam tidak ikut campur; sesudah
+   boss mati ada **breather** (spawnT ≥ 1,4, surgeT ≥ 11) untuk memanen XP
+   dan pulih. Hull boss 64 + 5×wave → 58 + 5×wave; kunjungan pertama
+   (wave 5) spiral lebih lambat (4,8 dtk) dan nova pertamanya disimpan.
+3. **Eskalasi boss**: wave ≥ 10 Dreadnought bergantian spiral dengan
+   **fan 3 orb terarah** ke pemain; wave ≥ 15 spiral melebar 12 → 14 orb.
+4. **Feedback momen penting**: hitstop 0,14 dtk (dt ×0,12) saat boss mati;
+   pengumuman milestone combo ×1,5 / ×2,0 / **COMBO MAX ×3,0** di posisi
+   pemain; banner **"THE GARDEN FADES"** saat HP jatuh ke 1 + vignette
+   kritis lebih keras dan cepat di 1 HP.
+5. **Asuransi dead-air**: arena kosong tidak pernah menunggu trickle
+   (spawnT ditarik ke 0,3 bila tak ada musuh aktif).
+
+**Proses tuning — pelajaran stream RNG:** game ini memakai satu stream RNG
+bersama, jadi perubahan gameplay apa pun mengocok ulang nasib tiap seed;
+median survival 20 seed terbukti tidak stabil antar-varian (162–542 dtk)
+sementara metrik agregat stabil. Karena itu varian final dipilih dari
+**distribusi 40 seed** melawan round 2 yang ter-commit, bukan seed tunggal:
+
+| Metrik (bot prioritas, 40 seed, cap 600 dtk) | Round 2 | Round 3 |
+|---|---|---|
+| Mean survival | 357 dtk | 352 dtk |
+| Mencapai 300 dtk | 20/40 | 19/40 |
+| Mencapai wave 10 | 20/40 | 19/40 |
+| **Cap penuh 600 dtk** | 1/40 | **9/40** |
+| **Mati dini (wave ≤ 5)** | 17/40 | **12/40** |
+| Kematian tercepat | 85 dtk | 74 dtk (tak ada kematian < 60 dtk) |
+
+Kurva round 3: frustrasi dini turun, run penuh naik tajam, daya tahan
+menengah setara — kematian menumpuk di wave 4–6 (zona roguelite wajar)
+dan di atrisi wave 19–20. Bot pengukur tetap **tidak memakai dash**, jadi
+angka ini lantai konservatif untuk pemain manusia (dash i-frame adalah
+jawaban manusia untuk surround dan fan boss).
+
+**Verifikasi round 3 (2026-11-17, Node v24 lokal):**
+- `node test/simulate.mjs` — **14/14 PASS**: determinisme 3 seed × 2 run
+  identik; seed 1337 bertahan 596,6 dtk / wave 20 / level 53 / 6.469 kill;
+  seed 4242 597,3 dtk wave 20; bot naif mati 3/3 (55–111 dtk).
+- `node test/browser-stub.mjs` — **10/10 PASS**: boot, menu → start →
+  level-up lewat event asli, pause, mode sim.html menerbitkan JSON.
+- **Build ala grader** dua kali → stdout sama, output **byte-identik**
+  (`index.html` 61.716 byte, `sim.html` 61.855 byte); satu-satunya href
+  eksternal adalah anchor footer ke make.fun (bukan resource yang dimuat).
+- `out/` lokal diregenerasi dari sumber round 3 (gitignored).
+
+## Sisa kebutuhan submit round 3 (di luar sesi ini)
+
+1. Commit perubahan (`game.js`, `STATUS.md`) ke repo `rismzz/best-game-01`;
+   ambil SHA-nya.
+2. Bundle transkrip sesi pembangunan round 3 (sesi ini + sesi terkait)
+   dengan kit CLI.
+3. Submit via kit sebagai round 3 sebelum **2026-11-19 01:00 WIB**
+   (entries tutup 2026-11-18T18:00Z; kuota harian 5). Tidak ada entry fee.

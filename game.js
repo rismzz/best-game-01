@@ -10,6 +10,13 @@
  * dash with i-frames, two more blooms (Swift Petals, Photosynthesis),
  * and a generated WebAudio soundscape — no audio assets anywhere.
  *
+ * Round 3 tunes the feel: an opening ring pack and an earlier first
+ * surge (no quiet first 30 seconds), boss fights that thin the trickle
+ * and pause surges so the Dreadnought — not the crowd — is the threat,
+ * a boss that learns aimed fan volleys from wave 10 and wider spirals
+ * from wave 15, hitstop on a boss kill, combo milestone announcements,
+ * and a "THE GARDEN FADES" warning the moment the player hits 1 HP.
+ *
  * Pure game logic (class Game) is DOM-free and fully deterministic for a
  * given seed: every random decision flows from one mulberry32 stream.
  * The browser layer at the bottom only renders, feeds input and voices
@@ -72,8 +79,9 @@ class Game {
     this.comboT = 0;
     this.shakeT = 0;
     this.flashT = 0;
-    this.spawnT = 0.6;
-    this.surgeT = 40;
+    this.freezeT = 0;
+    this.spawnT = 0.45;
+    this.surgeT = 34;
     this.banner = null;
     this.bullets = [];
     this.ebullets = [];
@@ -82,6 +90,7 @@ class Game {
     this.parts = [];
     this.texts = [];
     this.pendingUpgrades = [];
+    this.surges = 0;
     this.stats = { shots: 0, hits: 0 };
     this.player = {
       x: VB_W / 2, y: VB_H / 2, vx: 0, vy: 0, r: 13,
@@ -100,6 +109,15 @@ class Game {
     this.reset();
     this.state = "playing";
     this.banner = { text: "WAVE 1", t: 2.2 };
+    // opening ring: five chasers close in from every side, so the first
+    // seconds are already a fight — no waiting for the trickle to arrive
+    const off = this.rng() * Math.PI * 2;
+    for (let i = 0; i < 5; i++) {
+      const a = off + (i / 5) * Math.PI * 2;
+      this.spawnEnemy("chaser",
+        clamp(this.player.x + Math.cos(a) * 330, 16, VB_W - 16),
+        clamp(this.player.y + Math.sin(a) * 330, 16, VB_H - 16), 0.35);
+    }
   }
 
   comboMul() { return 1 + Math.min(this.combo, 40) * 0.05; }
@@ -145,7 +163,7 @@ class Game {
     const hpMul = (1 + Math.max(0, this.wave - 2) * 0.18) * (1 + this.time * 0.006);
     const spMul = 1 + Math.min(0.6, this.time * 0.0016);
     let hp = Math.round(base.hp * hpMul);
-    if (type === "dread") hp = Math.round(64 + this.wave * 5); // boss hull grows per visit
+    if (type === "dread") hp = Math.round(58 + this.wave * 5); // boss hull grows per visit
     const phase = this.rng() * Math.PI * 2;
     this.enemies.push({
       type: type, x: x, y: y, vx: 0, vy: 0, kx: 0, ky: 0,
@@ -153,7 +171,7 @@ class Game {
       speed: base.speed * spMul * (0.85 + this.rng() * 0.4),
       damage: base.damage, score: base.score, xp: base.xp, color: base.color,
       phase: phase,
-      spin: phase * 2.39, ph1: false, ph2: false,
+      spin: phase * 2.39, ph1: false, ph2: false, alt: false,
       mode: "stalk", modeT: 2 + this.rng() * 2.5, dashX: 0, dashY: 0,
       spawnIn: spawnIn === undefined ? 0.55 : spawnIn,
       flashT: 0,
@@ -161,16 +179,24 @@ class Game {
   }
 
   spawnSurge() {
-    const n = 6 + this.wave;
+    // the first surge of a run is a smaller, wider, slower-telegraphed
+    // ring: a signature moment, not a wall — the player is level 3-4
+    // when it lands and has no answer to a tight surround yet
+    const first = this.surges === 0;
+    const n = first ? 5 : 6 + this.wave;
+    this.surges++;
+    const ringR = first ? 430 : 350;
     const p = this.player;
     for (let i = 0; i < n; i++) {
       const a = (i / n) * Math.PI * 2 + this.rng() * 0.3;
-      const x = clamp(p.x + Math.cos(a) * 350, 16, VB_W - 16);
-      const y = clamp(p.y + Math.sin(a) * 350, 16, VB_H - 16);
+      const x = clamp(p.x + Math.cos(a) * ringR, 16, VB_W - 16);
+      const y = clamp(p.y + Math.sin(a) * ringR, 16, VB_H - 16);
       let type = "chaser";
       if (this.wave >= 4 && i % 5 === 4) type = "dasher";
       else if (this.wave >= 3 && i % 3 === 2) type = "weaver";
-      this.spawnEnemy(type, x, y, 0.9);
+      // the first ring also activates in sequence, so the surround
+      // closes gradually and always leaves a gap to slip through
+      this.spawnEnemy(type, x, y, first ? 1.15 + i * 0.15 : 0.9);
     }
     this.banner = { text: "THE VOID SURGES", t: 1.8 };
   }
@@ -209,7 +235,7 @@ class Game {
   }
 
   dreadBurst(e) {
-    const n = 12;
+    const n = this.wave >= 15 ? 14 : 12; // later visits spin wider spirals
     e.spin += 0.55; // each spiral is rotated, so the gaps move
     for (let i = 0; i < n; i++) {
       const a = e.spin + (i / n) * Math.PI * 2;
@@ -217,6 +243,21 @@ class Game {
         x: e.x, y: e.y,
         vx: Math.cos(a) * 168, vy: Math.sin(a) * 168,
         r: 6, life: 4.4,
+      });
+    }
+  }
+
+  dreadFan(e) {
+    // aimed three-orb fan at the player: the late boss stops only
+    // broadcasting and starts hunting (wave 10+)
+    const p = this.player;
+    const base = Math.atan2(p.y - e.y, p.x - e.x);
+    for (let i = -1; i <= 1; i++) {
+      const a = base + i * 0.17;
+      this.ebullets.push({
+        x: e.x + Math.cos(base) * (e.r + 4), y: e.y + Math.sin(base) * (e.r + 4),
+        vx: Math.cos(a) * 238, vy: Math.sin(a) * 238,
+        r: 6, life: 2.6,
       });
     }
   }
@@ -280,6 +321,12 @@ class Game {
     this.kills++;
     this.combo++;
     this.comboT = 2.2;
+    // combo milestones get announced at the player: the multiplier is
+    // the run's second score engine, so its growth must be felt
+    if (this.combo === 10 || this.combo === 20 || this.combo === 40) {
+      this.addText(this.player.x, this.player.y - 32,
+        this.combo === 40 ? "COMBO MAX x3.0" : "COMBO x" + this.comboMul().toFixed(1), "#ffe066");
+    }
     const gained = Math.round(e.score * this.comboMul());
     this.score += gained;
     if (e.score >= 20 || this.combo % 10 === 0) {
@@ -304,6 +351,11 @@ class Game {
       this.addText(e.x, e.y - 34, "DREADNOUGHT FELLED", "#ff2e63");
       this.burst(e.x, e.y, "#ff2e63", 46, 340);
       this.shakeT = Math.max(this.shakeT, 0.4);
+      this.freezeT = Math.max(this.freezeT, 0.14); // hitstop: the kill lands
+      // a breather after the boss: time to harvest its pollen and heal
+      // before the trickle and surges resume — no death-by-next-wave
+      this.spawnT = Math.max(this.spawnT, 1.4);
+      this.surgeT = Math.max(this.surgeT, 11);
       this.spawnEnemy("dasher", e.x - 26, e.y, 0.3);
       this.spawnEnemy("dasher", e.x + 26, e.y, 0.3);
       this.spawnEnemy("chaser", e.x, e.y - 26, 0.3);
@@ -329,6 +381,10 @@ class Game {
     this.shakeT = Math.max(this.shakeT, 0.28);
     this.combo = 0;
     this.burst(p.x, p.y, "#ff5d7a", 16, 280);
+    if (p.hp === 1) {
+      // one hit from darkness: say it out loud, not just a vignette
+      this.banner = { text: "THE GARDEN FADES", t: 1.3 };
+    }
     if (p.hp <= 0) {
       p.hp = 0;
       this.state = "over";
@@ -408,6 +464,13 @@ class Game {
   step(dt, input) {
     if (this.state !== "playing") return;
     const p = this.player;
+    // hitstop: a boss kill freezes the world for a beat (real dt burns
+    // the freeze down, game dt crawls) — purely state-driven, so a run
+    // stays deterministic for its seed
+    if (this.freezeT > 0) {
+      this.freezeT -= dt;
+      dt *= 0.12;
+    }
     this.time += dt;
 
     // wave banner
@@ -449,14 +512,20 @@ class Game {
       }
     }
 
-    // spawning
+    // spawning — while a Dreadnought is on the field the trickle thins
+    // and surges hold: the boss alone is the threat, not boss + crowd
+    let bossActive = false;
+    for (let i = 0; i < this.enemies.length; i++) {
+      if (this.enemies[i].type === "dread") { bossActive = true; break; }
+    }
     this.spawnT -= dt;
     if (this.spawnT <= 0) {
-      this.spawnT += this.spawnInterval();
+      this.spawnT += this.spawnInterval() * (bossActive ? 1.7 : 1);
       const pt = this.edgePoint();
       this.spawnEnemy(this.pickType(), pt.x, pt.y);
       // late-game packs: a few chasers arrive shoulder to shoulder
-      if (this.time > 150 && this.rng() < 0.3) {
+      // (never during a boss fight — the boss window stays focused)
+      if (this.time > 150 && !bossActive && this.rng() < 0.3) {
         const extra = 2 + Math.floor(this.rng() * 2);
         for (let k = 0; k < extra; k++) {
           this.spawnEnemy("chaser",
@@ -465,10 +534,22 @@ class Game {
         }
       }
     }
-    this.surgeT -= dt;
-    if (this.surgeT <= 0) {
-      this.surgeT = 34;
-      this.spawnSurge();
+    // dead-air insurance: an empty arena never waits on the trickle
+    if (this.spawnT > 0.3) {
+      let anyActive = false;
+      for (let i = 0; i < this.enemies.length; i++) {
+        if (this.enemies[i].spawnIn <= 0) { anyActive = true; break; }
+      }
+      if (!anyActive) this.spawnT = 0.3;
+    }
+    if (bossActive) {
+      if (this.surgeT < 6) this.surgeT = 6; // no surge on top of the boss
+    } else {
+      this.surgeT -= dt;
+      if (this.surgeT <= 0) {
+        this.surgeT = 34;
+        this.spawnSurge();
+      }
     }
 
     // player movement
@@ -583,14 +664,22 @@ class Game {
         }
       } else if (e.type === "dread") {
         // the Dreadnought: slow chase, rotating spiral bursts, and a
-        // radial nova each time its hull crosses a third of its health
+        // radial nova each time its hull crosses a third of its health;
+        // from wave 10 it alternates spirals with aimed fan volleys
         vx = ux * e.speed; vy = uy * e.speed;
         e.modeT -= dt;
         if (e.modeT <= 0) {
-          e.modeT = 4.2;
-          this.dreadBurst(e);
+          // the first visit (wave 5) breathes a little slower and saves
+          // its first nova — an introduction, not an execution
+          e.modeT = this.wave >= 10 ? 4.2 : 4.8;
+          if (this.wave >= 10 && e.alt) this.dreadFan(e);
+          else this.dreadBurst(e);
+          e.alt = !e.alt;
         }
-        if (!e.ph1 && e.hp <= e.maxHp * 0.66) { e.ph1 = true; this.dreadNova(e); }
+        if (!e.ph1 && e.hp <= e.maxHp * 0.66) {
+          e.ph1 = true;
+          if (this.wave >= 10) this.dreadNova(e);
+        }
         if (!e.ph2 && e.hp <= e.maxHp * 0.33) { e.ph2 = true; this.dreadNova(e); }
       } else { // tank: slow chase + periodic radial orb burst
         vx = ux * e.speed; vy = uy * e.speed;
@@ -1118,9 +1207,12 @@ function drawGame(ctx, g, stars) {
     ctx.fillRect(-30, -30, VB_W + 60, VB_H + 60);
   }
 
-  // low-hull warning: the edges of the garden pulse red at 2 HP or less
+  // low-hull warning: the edges of the garden pulse red at 2 HP or
+  // less — harder and faster on the very last hit point
   if (g.state === "playing" && p.hp <= 2 && p.hp > 0) {
-    const va = 0.13 + 0.08 * Math.sin(g.time * 6);
+    const va = p.hp === 1
+      ? 0.2 + 0.11 * Math.sin(g.time * 8)
+      : 0.13 + 0.08 * Math.sin(g.time * 6);
     const vg = ctx.createRadialGradient(VB_W / 2, VB_H / 2, 260, VB_W / 2, VB_H / 2, 720);
     vg.addColorStop(0, "rgba(255,30,60,0)");
     vg.addColorStop(1, "rgba(255,30,60," + va + ")");
