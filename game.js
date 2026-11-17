@@ -160,7 +160,11 @@ class Game {
 
   spawnEnemy(type, x, y, spawnIn) {
     const base = ENEMY_TYPES[type];
-    const hpMul = (1 + Math.max(0, this.wave - 2) * 0.18) * (1 + this.time * 0.006);
+    // round 4: the two multipliers used to compound to ~19x enemy HP by
+    // wave 20, so even a maxed build could not chew through the crowd
+    // and runs ended in attrition at 540-599s; flattening the time factor
+    // (0.006 -> 0.0045) caps it near ~15x instead
+    const hpMul = (1 + Math.max(0, this.wave - 2) * 0.18) * (1 + this.time * 0.0045);
     const spMul = 1 + Math.min(0.6, this.time * 0.0016);
     let hp = Math.round(base.hp * hpMul);
     if (type === "dread") hp = Math.round(58 + this.wave * 5); // boss hull grows per visit
@@ -520,12 +524,20 @@ class Game {
     }
     this.spawnT -= dt;
     if (this.spawnT <= 0) {
-      this.spawnT += this.spawnInterval() * (bossActive ? 1.7 : 1);
+      // round 4: pressure valve — when 40+ live enemies already crowd
+      // the arena, the trickle slows 1.6x so the backlog can be cleared
+      // instead of growing into an unrecoverable flood
+      let live = 0;
+      for (let i = 0; i < this.enemies.length; i++) if (this.enemies[i].spawnIn <= 0) live++;
+      this.spawnT += this.spawnInterval() * (bossActive ? 1.7 : 1) * (live >= 40 ? 1.6 : 1);
       const pt = this.edgePoint();
       this.spawnEnemy(this.pickType(), pt.x, pt.y);
       // late-game packs: a few chasers arrive shoulder to shoulder
       // (never during a boss fight — the boss window stays focused)
-      if (this.time > 150 && !bossActive && this.rng() < 0.3) {
+      // round 4: chaser packs used to start at t=150, on top of the
+      // trickle floor and the boss aftermath — wave 6 drowned in them.
+      // They now start at t=240 (wave 9), so the mid-game flood is staged
+      if (this.time > 240 && !bossActive && this.rng() < 0.3) {
         const extra = 2 + Math.floor(this.rng() * 2);
         for (let k = 0; k < extra; k++) {
           this.spawnEnemy("chaser",

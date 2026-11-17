@@ -177,3 +177,81 @@ jawaban manusia untuk surround dan fan boss).
    dengan kit CLI.
 3. Submit via kit sebagai round 3 sebelum **2026-11-19 01:00 WIB**
    (entries tutup 2026-11-18T18:00Z; kuota harian 5). Tidak ada entry fee.
+
+## Round 4 (2026-11-17) — dua klaster kematian, bukan fitur baru
+
+Target hanya dua kelemahan terukur dari diagnosis round 3: kematian
+menumpuk di wave 4–6, dan atrisi wave 19–20. Diagnostik baru (bot
+prioritas, 40 seed 1–40, telemetri per 0,5 dtk) menemukan akar yang
+sama di kedua klaster: **inflow musuh melampaui kill rate, kerumunan
+menumpuk, lalu hit beruntun** — kematian wave 4–6 terjadi dengan
+14–75 musuh aktif dan HP jatuh 5→0 dalam ~10 dtk; kematian wave 19–20
+dengan 50–70 musuh aktif dan 28–63 orb di udara. Akar kedua: HP musuh
+tumbuh dari dua pengali sekaligus — `(1 + (wave−2)×0,18) × (1 + t×0,006)`
+— sehingga di wave 20 mencapai ~19x HP dasar, dan build maksimal pun
+tak bisa mengimbangi.
+
+**Lever yang diuji satu-satu (distribusi 40 seed, seed 1–40):**
+boss-kill heal +1 HP hampir tidak bergerak (cap 13/40 vs 12); tank cap
+6 bersamaan membantu akhir game (cap 21/40, hanya 1 kematian wave 20)
+tapi tidak awal; surge-hold sebelum boss REGRESI (cap 7/40 — surge yang
+ditahan mendarat di wave 6 dan memperburuknya); crowd valve saja
+menghapus semua kematian wave 19–20 tapi tidak menyentuh awal.
+
+**Perubahan final (semua di `game.js`, deterministik, tanpa draw RNG baru):**
+1. **HP musuh diratakan**: faktor waktu `0,006 → 0,0045` — di wave 20
+   HP musuh ~15x (dari ~19x); di wave 5 ~10% lebih ringan. Ini lever
+   terbesar: sendiri saja cap 12→27/40, kematian dini 13→4, atrisi
+   wave 19–20 hilang total.
+2. **Pressure valve**: saat ≥40 musuh hidup di arena, trickle
+   melambat 1,6x — backlog bisa dibersihkan, bukan menumpuk tanpa
+   bisa pulih.
+3. **Pack chaser dimundurkan**: mulai t=240 (wave 9) bukan t=150 —
+   wave 6 tidak lagi kebanjiran pack di atas trickle penuh dan sisa
+   boss.
+4. **DITOLAK dengan data**: perubahan slope trickle (floor 0,15 dtk di
+   t=150, bukan t=120) tampak menjanjikan di distribusi tapi
+   **merusak dua seed showcase** sim.html (1337: 596,6→96,4 dtk;
+   4242: 597,3→156,4 dtk) di SEMUA varian yang memakainya — bot masuk
+   wave 4–5 under-level karena kill/XP lebih lambat. Varian akhir
+   tidak memakainya.
+
+**Distribusi 80 seed (1–80) — varian final vs round 3 ter-commit:**
+
+| Metrik (bot prioritas, cap 600 dtk) | Round 3 | Round 4 |
+|---|---|---|
+| Mean survival | 342 dtk | **461 dtk** |
+| Cap penuh 600 dtk | 22/80 | **56/80** |
+| Mencapai 300 dtk | 37/80 | **56/80** |
+| Mati dini (wave ≤ 5) | 26/80 | **14/80** |
+| Kematian wave 19–20 (atrisi) | 15/80 | **0/80** |
+| Kematian di bawah 60 dtk | 1 (45,4 dtk) | **0** |
+
+Kematian tersisa terkonsentrasi di wave 4–7 (zona roguelite wajar);
+wave 4–6 turun 36→23/80. Bot pengukur tetap **tidak memakai dash**,
+jadi angka ini lantai konservatif untuk pemain manusia.
+
+**Seed showcase sim.html** (1337/4242/9001 — yang dipakai dossier):
+round 3: cap, cap, mati 155 dtk. Round 4: **cap, cap, mati 167 dtk**
+— profil sama, seed 9001 sedikit lebih jauh. Bot naif tetap mati 3/3
+(66–85 dtk), jadi pilihan build tetap menentukan.
+
+**Verifikasi round 4 (2026-11-17, Node v24 lokal):**
+- `node test/simulate.mjs` — **14/14 PASS**: determinisme 3 seed × 2
+  run identik; seed 1337 bertahan 599,5 dtk / wave 20 / level 52;
+  bot naif mati 3/3 (66–107 dtk).
+- `node test/browser-stub.mjs` — **10/10 PASS**: boot, menu → start →
+  level-up lewat event asli, pause, mode sim.html menerbitkan JSON.
+- **Build ala grader** dua kali → stdout sama, output **byte-identik**
+  (`index.html` 62.546 byte, `sim.html` 62.685 byte); satu-satunya href
+  eksternal adalah anchor footer ke make.fun (bukan resource yang dimuat).
+- `out/` lokal diregenerasi dari sumber round 4 (gitignored).
+
+## Sisa kebutuhan submit round 4 (di luar sesi ini)
+
+1. Commit perubahan (`game.js`, `STATUS.md`) ke repo `rismzz/best-game-01`;
+   ambil SHA-nya.
+2. Bundle transkrip sesi pembangunan round 4 (sesi ini + sesi terkait)
+   dengan kit CLI.
+3. Submit via kit sebagai round 4 sebelum **2026-11-19 01:00 WIB**
+   (entries tutup 2026-11-18T18:00Z; kuota harian 5). Tidak ada entry fee.
