@@ -15,13 +15,23 @@ it on new blooms — twin shots, thorn-piercing rounds, an aegis bud that
 swallows a killing blow — while the waves grow teeth: strafing Weavers,
 telegraph-and-dash Strikers, and splitting Hex Tanks.
 
-- **Four enemy minds**, each readable at a glance: chasers, sine-strafing
-  weavers, dashers that flash a telegraph line before they lunge, and tanks
-  whose health ring drains as they break into chasers — and which seed the
-  air with drifting void-orbs you have to weave through.
+- **Six enemy minds**, each readable at a glance: chasers, sine-strafing
+  weavers, dashers that flash a telegraph line before they lunge, tanks
+  whose health ring drains as they break into chasers, spitters that keep
+  their distance and lob aimed orbs with a glowing wind-up — and every
+  fifth wave a **Dreadnought**: a mini-boss with rotating spiral orb
+  bursts, phase novas, its own health bar, and a hull that splits into
+  dashers and chasers when it falls.
 - **A build every run**: XP pollen levels you up and offers a choice of
-  1-of-3 blooms from 8 upgrades (plus a heal when you are hurting), so runs
-  diverge — glass-cannon multishot, pierce lanes, shield tanking.
+  1-of-3 blooms from 10 upgrades (plus a heal when you are hurting), and
+  every offer guarantees at least one offensive bloom, so a run can always
+  grow its teeth — glass-cannon multishot, pierce lanes, shield tanking,
+  or a Photosynthesis build that regrows HP while it kites.
+- **A dash with i-frames**: Shift bursts you through orb walls and
+  lunging dashers, on a short cooldown with its own ring and trail.
+- **Generated sound**: a small WebAudio synth voices every shot, kill,
+  level-up, shield break and boss arrival — no audio files anywhere.
+  M mutes.
 - **Escalation with fairness**: spawn pressure, surges that ring you in,
   and wave scaling — every threat is telegraphed, every death is earned.
 - **Combo scoring**: chained kills raise a multiplier up to x3.0; one hit
@@ -31,8 +41,8 @@ telegraph-and-dash Strikers, and splitting Hex Tanks.
   (`runSimulation`) reproduces exactly — see `sim.html` / `test/`.
 
 Controls: WASD / arrows to move, mouse to aim, hold mouse or Space to fire,
-1–3 to pick a bloom, P to pause. Touch devices get a drag stick with
-auto-aim and auto-fire.
+Shift to dash, 1–3 to pick a bloom, P to pause, M to mute. Touch devices
+get a drag stick with auto-aim and auto-fire.
 
 ## Run it
 

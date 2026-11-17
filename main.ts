@@ -60,9 +60,9 @@ __CSS__
        it on new blooms — twin shots, thorn pierce, an aegis bud — before the dark closes in.</p>
     <p class="controls">
       <strong>Move</strong> WASD / arrow keys &nbsp;·&nbsp; <strong>Aim</strong> mouse &nbsp;·&nbsp;
-      <strong>Fire</strong> hold mouse / Space<br>
+      <strong>Fire</strong> hold mouse / Space &nbsp;·&nbsp; <strong>Dash</strong> Shift (briefly untouchable)<br>
       <strong>Level up:</strong> click a bloom card or press 1–3 &nbsp;·&nbsp; <strong>Pause</strong> P &nbsp;·&nbsp;
-      Touch: drag to move, the Bloomkeeper auto-fires
+      <strong>Sound</strong> M to mute &nbsp;·&nbsp; Touch: drag to move, the Bloomkeeper auto-fires
     </p>
     <button class="cta" id="btn-start">START DEFENDING</button>
   </div>

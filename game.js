@@ -5,9 +5,15 @@
  * You are the last Bloomkeeper. The Void sends its shapes in waves;
  * harvest their pollen, grow new blooms, and do not let the garden go dark.
  *
+ * Round 2 adds: the Spitter (a ranged shape that keeps its distance and
+ * spits aimed orbs), a Dreadnought mini-boss every fifth wave, a Shift
+ * dash with i-frames, two more blooms (Swift Petals, Photosynthesis),
+ * and a generated WebAudio soundscape — no audio assets anywhere.
+ *
  * Pure game logic (class Game) is DOM-free and fully deterministic for a
  * given seed: every random decision flows from one mulberry32 stream.
- * The browser layer at the bottom only renders and feeds input.
+ * The browser layer at the bottom only renders, feeds input and voices
+ * state changes through the synth.
  */
 
 const VB_W = 1280;
@@ -30,21 +36,25 @@ const ENEMY_TYPES = {
   weaver: { r: 12, hp: 2,  speed: 168, damage: 1, score: 15, xp: 1, color: "#ffa94d" },
   dasher: { r: 11, hp: 2,  speed: 110, damage: 1, score: 20, xp: 2, color: "#4dd8ff" },
   tank:   { r: 25, hp: 16, speed: 55,  damage: 2, score: 50, xp: 4, color: "#b44dff" },
+  spitter:{ r: 12, hp: 3,  speed: 122, damage: 1, score: 25, xp: 2, color: "#ff4dd2" },
+  dread:  { r: 40, hp: 100, speed: 40,  damage: 2, score: 500, xp: 12, color: "#ff2e63" },
 };
 
 const UPGRADES = [
   { id: "multishot", name: "Twin Bloom",   desc: "+1 projectile",                    max: 3 },
   { id: "damage",    name: "Heavy Petals", desc: "+1 bullet damage",                 max: 5 },
   { id: "rapid",     name: "Rapid Bloom",  desc: "+18% fire rate",                   max: 6 },
+  { id: "swiftpetals", name: "Swift Petals", desc: "+20% bullet speed, longer reach", max: 3 },
   { id: "pierce",    name: "Thorn Pierce", desc: "Bullets pierce +1 enemy",          max: 3 },
   { id: "shield",    name: "Aegis Bud",    desc: "A shield blocks one hit (10s recharge)", max: 1 },
   { id: "vitality",  name: "Deep Roots",   desc: "+1 max HP and heal 1",             max: 5 },
+  { id: "photosynthesis", name: "Photosynthesis", desc: "Regrow 1 HP over time",     max: 3 },
   { id: "magnet",    name: "Pollen Magnet", desc: "+45% pickup radius",              max: 4 },
   { id: "speed",     name: "Swift Roots",  desc: "+8% move speed",                   max: 5 },
   { id: "heal",      name: "Second Wind",  desc: "Heal 2 HP right now",              max: 99 },
 ];
 
-function xpNextFor(level) { return 8 + (level - 1) * 7; }
+function xpNextFor(level) { return 7 + (level - 1) * 6; }
 
 class Game {
   constructor(seed) {
@@ -77,8 +87,9 @@ class Game {
       x: VB_W / 2, y: VB_H / 2, vx: 0, vy: 0, r: 13,
       hp: 5, maxHp: 5, speed: 246,
       fireT: 0, fireInterval: 0.21, damage: 1, projectiles: 1,
-      pierce: 0, bulletSpeed: 660, magnetR: 92,
+      pierce: 0, bulletSpeed: 660, bulletLife: 0.85, magnetR: 92,
       shield: false, shieldReady: false, shieldT: 0,
+      dashT: 0, dashCd: 0, dashX: 1, dashY: 0, regenT: 0,
       invulnT: 0, aimX: 1, aimY: 0,
       xp: 0, level: 1, xpNext: xpNextFor(1),
       upCounts: {},
@@ -102,13 +113,15 @@ class Game {
   pickType() {
     const t = this.time;
     const r = this.rng();
-    let wTank = 0, wDash = 0, wWeave = 0;
+    let wTank = 0, wDash = 0, wWeave = 0, wSpit = 0;
     if (t >= 70) wTank = 0.08 + Math.min(0.06, (t - 70) * 0.0005);
     if (t >= 55) wDash = 0.20;
+    if (t >= 170) wSpit = 0.05 + Math.min(0.02, (t - 170) * 0.0002);
     if (t >= 18) wWeave = 0.30;
     if (r < wTank) return "tank";
     if (r < wTank + wDash) return "dasher";
-    if (r < wTank + wDash + wWeave) return "weaver";
+    if (r < wTank + wDash + wSpit) return "spitter";
+    if (r < wTank + wDash + wSpit + wWeave) return "weaver";
     return "chaser";
   }
 
@@ -131,12 +144,16 @@ class Game {
     const base = ENEMY_TYPES[type];
     const hpMul = (1 + Math.max(0, this.wave - 2) * 0.18) * (1 + this.time * 0.006);
     const spMul = 1 + Math.min(0.6, this.time * 0.0016);
+    let hp = Math.round(base.hp * hpMul);
+    if (type === "dread") hp = Math.round(64 + this.wave * 5); // boss hull grows per visit
+    const phase = this.rng() * Math.PI * 2;
     this.enemies.push({
       type: type, x: x, y: y, vx: 0, vy: 0, kx: 0, ky: 0,
-      r: base.r, hp: Math.round(base.hp * hpMul), maxHp: Math.round(base.hp * hpMul),
+      r: base.r, hp: hp, maxHp: hp,
       speed: base.speed * spMul * (0.85 + this.rng() * 0.4),
       damage: base.damage, score: base.score, xp: base.xp, color: base.color,
-      phase: this.rng() * Math.PI * 2,
+      phase: phase,
+      spin: phase * 2.39, ph1: false, ph2: false,
       mode: "stalk", modeT: 2 + this.rng() * 2.5, dashX: 0, dashY: 0,
       spawnIn: spawnIn === undefined ? 0.55 : spawnIn,
       flashT: 0,
@@ -171,6 +188,52 @@ class Game {
     }
   }
 
+  spawnDread() {
+    for (let i = 0; i < this.enemies.length; i++) {
+      if (this.enemies[i].type === "dread") return; // only one at a time
+    }
+    const pt = this.edgePoint();
+    this.spawnEnemy("dread", pt.x, pt.y, 1.2);
+    this.banner = { text: "A DREADNOUGHT STIRS", t: 2.4 };
+  }
+
+  spitterShoot(e) {
+    const p = this.player;
+    const dx = p.x - e.x, dy = p.y - e.y;
+    const d = Math.hypot(dx, dy) || 1;
+    this.ebullets.push({
+      x: e.x + (dx / d) * (e.r + 4), y: e.y + (dy / d) * (e.r + 4),
+      vx: (dx / d) * 215, vy: (dy / d) * 215,
+      r: 6, life: 2.8,
+    });
+  }
+
+  dreadBurst(e) {
+    const n = 12;
+    e.spin += 0.55; // each spiral is rotated, so the gaps move
+    for (let i = 0; i < n; i++) {
+      const a = e.spin + (i / n) * Math.PI * 2;
+      this.ebullets.push({
+        x: e.x, y: e.y,
+        vx: Math.cos(a) * 168, vy: Math.sin(a) * 168,
+        r: 6, life: 4.4,
+      });
+    }
+  }
+
+  dreadNova(e) {
+    const n = 14;
+    const off = this.rng() * Math.PI * 2;
+    for (let i = 0; i < n; i++) {
+      const a = off + (i / n) * Math.PI * 2;
+      this.ebullets.push({
+        x: e.x, y: e.y,
+        vx: Math.cos(a) * 214, vy: Math.sin(a) * 214,
+        r: 6, life: 3.6,
+      });
+    }
+  }
+
   // ---------------- combat ----------------
 
   fireBullets() {
@@ -185,10 +248,16 @@ class Game {
         y: p.y + Math.sin(baseA) * (p.r + 6),
         vx: Math.cos(a) * p.bulletSpeed,
         vy: Math.sin(a) * p.bulletSpeed,
-        r: 4, dmg: p.damage, pierceLeft: p.pierce, life: 0.85,
+        r: 4, dmg: p.damage, pierceLeft: p.pierce, life: p.bulletLife,
       });
       this.stats.shots++;
     }
+    // muzzle flash spark (purely visual)
+    this.parts.push({
+      x: p.x + Math.cos(baseA) * (p.r + 10), y: p.y + Math.sin(baseA) * (p.r + 10),
+      vx: Math.cos(baseA) * 60, vy: Math.sin(baseA) * 60,
+      life: 0, maxLife: 0.12, size: 3.2, color: "#d8fff3",
+    });
   }
 
   burst(x, y, color, count, speed) {
@@ -231,11 +300,21 @@ class Game {
       }
       this.shakeT = Math.max(this.shakeT, 0.18);
     }
+    if (e.type === "dread") {
+      this.addText(e.x, e.y - 34, "DREADNOUGHT FELLED", "#ff2e63");
+      this.burst(e.x, e.y, "#ff2e63", 46, 340);
+      this.shakeT = Math.max(this.shakeT, 0.4);
+      this.spawnEnemy("dasher", e.x - 26, e.y, 0.3);
+      this.spawnEnemy("dasher", e.x + 26, e.y, 0.3);
+      this.spawnEnemy("chaser", e.x, e.y - 26, 0.3);
+      this.spawnEnemy("chaser", e.x, e.y + 26, 0.3);
+    }
   }
 
   damagePlayer(dmg) {
     const p = this.player;
     if (p.invulnT > 0 || this.state !== "playing") return;
+    if (p.dashT > 0) return; // untouchable mid-dash
     if (p.shield && p.shieldReady) {
       p.shieldReady = false;
       p.shieldT = 10;
@@ -272,6 +351,13 @@ class Game {
       const i = Math.floor(this.rng() * copy.length);
       picks.push(copy.splice(i, 1)[0]);
     }
+    // every level-up offers at least one offensive bloom, so a run can
+    // always grow its damage: dead offers are what kill runs early
+    const OFFENSIVE = ["multishot", "damage", "rapid", "pierce", "swiftpetals"];
+    if (picks.length > 0 && !picks.some(function (u) { return OFFENSIVE.indexOf(u.id) >= 0; })) {
+      const off = copy.filter(function (u) { return OFFENSIVE.indexOf(u.id) >= 0; });
+      if (off.length > 0) picks[picks.length - 1] = off[Math.floor(this.rng() * off.length)];
+    }
     if (picks.length === 0) picks.push(UPGRADES[UPGRADES.length - 1]);
     this.pendingUpgrades = picks;
   }
@@ -282,6 +368,8 @@ class Game {
     if (!u || this.state !== "levelup") return;
     p.upCounts[u.id] = (p.upCounts[u.id] || 0) + 1;
     if (u.id === "rapid") p.fireInterval = Math.max(0.07, p.fireInterval * 0.85);
+    else if (u.id === "swiftpetals") { p.bulletSpeed *= 1.20; p.bulletLife += 0.15; }
+    else if (u.id === "photosynthesis") { /* regrowth ticks in step() */ }
     else if (u.id === "damage") p.damage += 1;
     else if (u.id === "multishot") p.projectiles += 1;
     else if (u.id === "pierce") p.pierce += 1;
@@ -327,6 +415,7 @@ class Game {
     if (w !== this.wave) {
       this.wave = w;
       this.banner = { text: "WAVE " + w, t: 2.0 };
+      if (w % 5 === 0) this.spawnDread(); // every fifth wave brings the boss
     }
     if (this.banner) {
       this.banner.t -= dt;
@@ -344,6 +433,20 @@ class Game {
     if (p.shield && !p.shieldReady) {
       p.shieldT -= dt;
       if (p.shieldT <= 0) { p.shieldReady = true; this.addText(p.x, p.y - 24, "SHIELD READY", "#7dffce"); }
+    }
+
+    // photosynthesis: slow regrowth, faster with more stacks
+    const photo = p.upCounts["photosynthesis"] || 0;
+    if (photo > 0) {
+      p.regenT += dt;
+      if (p.regenT >= 16 - 2 * photo) {
+        p.regenT = 0;
+        if (p.hp < p.maxHp) {
+          p.hp += 1;
+          this.addText(p.x, p.y - 26, "+1 HP", "#8dff6a");
+          this.burst(p.x, p.y, "#8dff6a", 8, 130);
+        }
+      }
     }
 
     // spawning
@@ -372,9 +475,23 @@ class Game {
     let mx = input.mx || 0, my = input.my || 0;
     const ml = Math.hypot(mx, my);
     if (ml > 1) { mx /= ml; my /= ml; }
+    // dash: a short invulnerable burst in the move direction (or the aim
+    // direction when standing still), on a 2.6s cooldown
+    if (p.dashT > 0) p.dashT -= dt;
+    if (p.dashCd > 0) p.dashCd -= dt;
+    if (input.dash && p.dashCd <= 0 && p.dashT <= 0) {
+      let dx = mx, dy = my;
+      if (dx * dx + dy * dy < 0.01) { dx = p.aimX; dy = p.aimY; }
+      const dl = Math.hypot(dx, dy) || 1;
+      p.dashX = dx / dl; p.dashY = dy / dl;
+      p.dashT = 0.16;
+      p.dashCd = 2.6;
+      this.burst(p.x, p.y, "#4dd8ff", 7, 150);
+    }
     const blend = 1 - Math.exp(-11 * dt);
     p.vx += (mx * p.speed - p.vx) * blend;
     p.vy += (my * p.speed - p.vy) * blend;
+    if (p.dashT > 0) { p.vx = p.dashX * 1060; p.vy = p.dashY * 1060; }
     p.x = clamp(p.x + p.vx * dt, p.r, VB_W - p.r);
     p.y = clamp(p.y + p.vy * dt, p.r, VB_H - p.r);
 
@@ -450,6 +567,31 @@ class Game {
           vx = ux * e.speed * 0.4; vy = uy * e.speed * 0.4;
           if (e.modeT <= 0) e.mode = "stalk";
         }
+      } else if (e.type === "spitter") {
+        // keeps its distance, strafes sideways, and spits aimed orbs;
+        // the wind-up glow (modeT < 0.55) telegraphs each shot
+        let rad = 0;
+        if (d > 365) rad = 1;
+        else if (d < 255) rad = -0.85;
+        const strafe = Math.sin(this.time * 0.8 + e.phase) * 0.75;
+        vx = (ux * rad + (-uy) * strafe) * e.speed;
+        vy = (uy * rad + ux * strafe) * e.speed;
+        e.modeT -= dt;
+        if (e.modeT <= 0) {
+          e.modeT = 3.4 + this.rng() * 0.7;
+          if (d < 580) this.spitterShoot(e);
+        }
+      } else if (e.type === "dread") {
+        // the Dreadnought: slow chase, rotating spiral bursts, and a
+        // radial nova each time its hull crosses a third of its health
+        vx = ux * e.speed; vy = uy * e.speed;
+        e.modeT -= dt;
+        if (e.modeT <= 0) {
+          e.modeT = 4.2;
+          this.dreadBurst(e);
+        }
+        if (!e.ph1 && e.hp <= e.maxHp * 0.66) { e.ph1 = true; this.dreadNova(e); }
+        if (!e.ph2 && e.hp <= e.maxHp * 0.33) { e.ph2 = true; this.dreadNova(e); }
       } else { // tank: slow chase + periodic radial orb burst
         vx = ux * e.speed; vy = uy * e.speed;
         e.modeT -= dt;
@@ -595,7 +737,7 @@ function botInput(g) {
     const dx = p.x - e.x, dy = p.y - e.y;
     const d2 = dx * dx + dy * dy;
     if (d2 < nd) { nd = d2; nearest = e; }
-    const R = 175;
+    const R = e.type === "dread" ? 300 : 175;
     if (d2 < R * R) {
       const d = Math.sqrt(d2) || 1;
       const w = (1 - d / R) * 2.4;
@@ -626,16 +768,36 @@ function botInput(g) {
       mx += (dx / d) * w;
       my += (dy / d) * w;
     }
+    // predictive dodge: if the orb's path passes close soon, sidestep it
+    const vv = b.vx * b.vx + b.vy * b.vy;
+    if (vv > 1) {
+      const tca = -(dx * b.vx + dy * b.vy) / vv; // time of closest approach
+      if (tca > 0 && tca < 0.9) {
+        const cx = dx + b.vx * tca, cy = dy + b.vy * tca;
+        const cd = Math.hypot(cx, cy);
+        if (cd < 62) {
+          const vl = Math.sqrt(vv);
+          const px = -b.vy / vl, py = b.vx / vl;
+          const side = (px * dx + py * dy) >= 0 ? 1 : -1;
+          const w = (1 - cd / 62) * 2.6 * (1 - tca / 0.9);
+          mx += px * side * w;
+          my += py * side * w;
+        }
+      }
+    }
   }
   mx += ((VB_W / 2 - p.x) / VB_W) * 0.4;
   my += ((VB_H / 2 - p.y) / VB_H) * 0.4;
+  // the measuring bot plays dash-less on purpose: the dash is a human
+  // reflex tool, so the sim numbers stay a conservative floor for humans
+  const dash = false;
   // only fire when the target is inside bullet range (~560px of travel)
-  const input = { mx: mx, my: my, firing: !!nearest && nd < 560 * 560, aimX: null, aimY: null };
+  const input = { mx: mx, my: my, firing: !!nearest && nd < 560 * 560, aimX: null, aimY: null, dash: dash };
   if (nearest) { input.aimX = nearest.x; input.aimY = nearest.y; }
   return input;
 }
 
-const BOT_PRIORITY = ["multishot", "damage", "rapid", "pierce", "shield", "vitality", "magnet", "speed", "heal"];
+const BOT_PRIORITY = ["multishot", "damage", "rapid", "swiftpetals", "pierce", "shield", "vitality", "photosynthesis", "magnet", "speed", "heal"];
 
 function botPickUpgrade(g) {
   let best = 0, bestRank = Infinity;
@@ -769,6 +931,29 @@ function drawGame(ctx, g, stars) {
         ctx.stroke();
         ctx.setLineDash([]);
       }
+    } else if (e.type === "spitter") {
+      poly(ctx, 0, 0, e.r, 5, g.time * 1.6 + e.phase);
+      ctx.fill(); ctx.stroke();
+      // wind-up glow: the core swells before each aimed spit
+      if (e.modeT < 0.55 && e.spawnIn <= 0) {
+        const k = 1 - Math.max(0, e.modeT) / 0.55;
+        ctx.shadowBlur = 0;
+        ctx.fillStyle = "rgba(255,77,210," + (0.35 + 0.55 * k) + ")";
+        ctx.beginPath();
+        ctx.arc(0, 0, 3 + 4.5 * k, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    } else if (e.type === "dread") {
+      poly(ctx, 0, 0, e.r, 6, g.time * 0.35 + e.phase);
+      ctx.fill(); ctx.stroke();
+      poly(ctx, 0, 0, e.r * 0.66, 6, -g.time * 0.6 + e.phase);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      ctx.strokeStyle = "rgba(255,255,255,0.7)";
+      ctx.lineWidth = 2.4;
+      ctx.beginPath();
+      ctx.arc(0, 0, e.r * 0.82, -Math.PI / 2, -Math.PI / 2 + (e.hp / e.maxHp) * Math.PI * 2);
+      ctx.stroke();
     } else { // tank
       poly(ctx, 0, 0, e.r, 6, g.time * 0.5 + e.phase);
       ctx.fill(); ctx.stroke();
@@ -842,6 +1027,22 @@ function drawGame(ctx, g, stars) {
       ctx.arc(0, 0, p.r + 8 + Math.sin(g.time * 3) * 1.5, 0, Math.PI * 2);
       ctx.stroke();
     }
+    // dash trail ghosts + cooldown ring
+    if (p.dashT > 0) {
+      ctx.fillStyle = "rgba(61,255,200,0.16)";
+      for (let gi = 1; gi <= 3; gi++) {
+        poly(ctx, -p.dashX * gi * 17, -p.dashY * gi * 17, p.r + 2 - gi * 2, 3, Math.atan2(p.dashY, p.dashX));
+        ctx.fill();
+      }
+    }
+    if (p.dashCd > 0) {
+      const frac = 1 - Math.max(0, p.dashCd) / 2.6;
+      ctx.strokeStyle = "rgba(77,216,255,0.5)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(0, 0, p.r + 13, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+      ctx.stroke();
+    }
     const ang = Math.atan2(p.aimY, p.aimX);
     ctx.rotate(ang);
     // engine flame
@@ -893,9 +1094,37 @@ function drawGame(ctx, g, stars) {
     ctx.restore();
   }
 
+  // dreadnought health bar (bottom centre, clear of the HUD)
+  for (let i = 0; i < g.enemies.length; i++) {
+    const e = g.enemies[i];
+    if (e.type !== "dread") continue;
+    const bw = 420, bx = (VB_W - bw) / 2, by = VB_H - 30;
+    ctx.save();
+    ctx.fillStyle = "rgba(10,6,20,0.72)";
+    ctx.fillRect(bx - 2, by - 2, bw + 4, 15);
+    ctx.fillStyle = "#ff2e63";
+    ctx.fillRect(bx, by, bw * clamp(e.hp / e.maxHp, 0, 1), 11);
+    ctx.font = "700 11px 'Segoe UI', system-ui, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#ffd7e2";
+    ctx.fillText("DREADNOUGHT", VB_W / 2, by - 7);
+    ctx.restore();
+    break;
+  }
+
   // damage flash
   if (g.flashT > 0) {
     ctx.fillStyle = "rgba(255,40,70," + (g.flashT * 0.55) + ")";
+    ctx.fillRect(-30, -30, VB_W + 60, VB_H + 60);
+  }
+
+  // low-hull warning: the edges of the garden pulse red at 2 HP or less
+  if (g.state === "playing" && p.hp <= 2 && p.hp > 0) {
+    const va = 0.13 + 0.08 * Math.sin(g.time * 6);
+    const vg = ctx.createRadialGradient(VB_W / 2, VB_H / 2, 260, VB_W / 2, VB_H / 2, 720);
+    vg.addColorStop(0, "rgba(255,30,60,0)");
+    vg.addColorStop(1, "rgba(255,30,60," + va + ")");
+    ctx.fillStyle = vg;
     ctx.fillRect(-30, -30, VB_W + 60, VB_H + 60);
   }
   ctx.restore();
@@ -928,6 +1157,74 @@ function bootBrowser() {
   const mouse = { x: VB_W / 2 + 120, y: VB_H / 2, down: false };
   const touch = { active: false, ox: 0, oy: 0, mx: 0, my: 0 };
 
+  // --- tiny WebAudio synth: every sound is generated in code, no assets ---
+  let audioCtx = null, muted = false;
+  let lastShotSfx = 0, lastPickSfx = 0, dashSfxPlayed = false, lastInput = null;
+  function ac() {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    if (!audioCtx) { try { audioCtx = new AC(); } catch (err) { return null; } }
+    if (audioCtx.state === "suspended") audioCtx.resume();
+    return audioCtx;
+  }
+  function tone(freq, dur, type, vol, slideTo, delay) {
+    const a = ac();
+    if (!a || muted) return;
+    try {
+      const t0 = a.currentTime + (delay || 0);
+      const o = a.createOscillator(), gn = a.createGain();
+      o.type = type;
+      o.frequency.setValueAtTime(freq, t0);
+      if (slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(24, slideTo), t0 + dur);
+      gn.gain.setValueAtTime(vol, t0);
+      gn.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(gn);
+      gn.connect(a.destination);
+      o.start(t0);
+      o.stop(t0 + dur + 0.03);
+    } catch (err) { /* sound is decoration; it must never break the game */ }
+  }
+  function sfx(name) {
+    if (name === "shoot") tone(840, 0.07, "square", 0.04, 420);
+    else if (name === "kill") tone(320, 0.16, "sawtooth", 0.09, 70);
+    else if (name === "bosskill") { tone(220, 0.4, "sawtooth", 0.15, 40); tone(110, 0.5, "square", 0.09, 30, 0.05); }
+    else if (name === "hurt") tone(170, 0.22, "sawtooth", 0.15, 60);
+    else if (name === "shield") tone(520, 0.18, "triangle", 0.13, 180);
+    else if (name === "levelup") { tone(523, 0.12, "triangle", 0.11); tone(659, 0.12, "triangle", 0.11, null, 0.09); tone(784, 0.2, "triangle", 0.11, null, 0.18); }
+    else if (name === "pickup") tone(1250, 0.05, "sine", 0.03, 1600);
+    else if (name === "dash") tone(280, 0.16, "sine", 0.08, 920);
+    else if (name === "boss") tone(82, 0.7, "sawtooth", 0.16, 38);
+    else if (name === "over") { tone(392, 0.3, "triangle", 0.13); tone(311, 0.3, "triangle", 0.13, null, 0.22); tone(233, 0.6, "triangle", 0.13, null, 0.44); }
+  }
+  // Watch the game state each frame and voice what changed.
+  let prevSfx = null;
+  function watchSfx(now) {
+    let dread = false;
+    for (let i = 0; i < game.enemies.length; i++) {
+      if (game.enemies[i].type === "dread") { dread = true; break; }
+    }
+    const cur = {
+      hp: game.player.hp, kills: game.kills, score: game.score,
+      level: game.player.level, state: game.state,
+      shieldReady: game.player.shieldReady, dread: dread, xp: game.player.xp,
+    };
+    if (prevSfx) {
+      if (cur.kills > prevSfx.kills) sfx(cur.score - prevSfx.score >= 400 ? "bosskill" : "kill");
+      if (cur.hp < prevSfx.hp) sfx("hurt");
+      if (cur.level > prevSfx.level) sfx("levelup");
+      if (cur.dread && !prevSfx.dread) sfx("boss");
+      if (cur.state === "over" && prevSfx.state !== "over") sfx("over");
+      if (game.player.shield && prevSfx.shieldReady && !cur.shieldReady) sfx("shield");
+      if (cur.xp > prevSfx.xp && now - lastPickSfx > 90) { lastPickSfx = now; sfx("pickup"); }
+    }
+    prevSfx = cur;
+    if (!paused && game.state === "playing") {
+      if (lastInput && lastInput.firing && now - lastShotSfx > 70) { lastShotSfx = now; sfx("shoot"); }
+      if (game.player.dashT > 0.1 && !dashSfxPlayed) { dashSfxPlayed = true; sfx("dash"); }
+      if (game.player.dashT <= 0) dashSfxPlayed = false;
+    }
+  }
+
   function toGameCoords(ev) {
     const r = canvas.getBoundingClientRect();
     return {
@@ -939,6 +1236,7 @@ function bootBrowser() {
   window.addEventListener("keydown", function (ev) {
     keys[ev.key.toLowerCase()] = true;
     if (ev.key === " " || ev.key.indexOf("Arrow") === 0) ev.preventDefault();
+    if (ev.key.toLowerCase() === "m") muted = !muted;
     if (game.state === "levelup") {
       if (ev.key === "1" || ev.key === "2" || ev.key === "3") {
         game.chooseUpgrade(Number(ev.key) - 1);
@@ -981,10 +1279,12 @@ function bootBrowser() {
   el("btn-again").addEventListener("click", startRun);
 
   function startRun() {
+    ac(); // unlock audio on the click/keypress that starts the run
     game = new Game((Date.now() % 2147483647) + 1);
     VoidBloom.__bootGame = game;
     game.start();
     paused = false;
+    prevSfx = null;
     syncOverlays();
   }
 
@@ -1008,7 +1308,7 @@ function bootBrowser() {
       if (best) { aimX = best.x; aimY = best.y; firing = true; }
       else firing = false;
     }
-    return { mx: mx, my: my, aimX: aimX, aimY: aimY, firing: firing };
+    return { mx: mx, my: my, aimX: aimX, aimY: aimY, firing: firing, dash: !!keys["shift"] };
   }
 
   let lastState = "";
@@ -1049,7 +1349,8 @@ function bootBrowser() {
     const p = game.player;
     hud.hp.style.width = (100 * Math.max(0, p.hp) / p.maxHp) + "%";
     hud.hpText.textContent = "HP " + Math.max(0, p.hp) + "/" + p.maxHp +
-      (p.shield ? (p.shieldReady ? " · SHIELD" : " · shield " + Math.ceil(p.shieldT) + "s") : "");
+      (p.shield ? (p.shieldReady ? " · SHIELD" : " · shield " + Math.ceil(p.shieldT) + "s") : "") +
+      (p.dashCd <= 0 ? " · DASH" : " · dash " + Math.ceil(p.dashCd) + "s");
     hud.xp.style.width = (100 * p.xp / p.xpNext) + "%";
     hud.level.textContent = "LV " + p.level;
     hud.score.textContent = String(game.score);
@@ -1083,8 +1384,9 @@ function bootBrowser() {
     if (delta > 250) delta = 250;
     acc += delta;
     let n = 0;
+    lastInput = currentInput();
     while (acc >= STEP && n < 5) {
-      if (!paused && game.state === "playing") game.step(1 / 60, currentInput());
+      if (!paused && game.state === "playing") game.step(1 / 60, lastInput);
       acc -= STEP;
       n++;
     }
@@ -1092,6 +1394,7 @@ function bootBrowser() {
     drawGame(ctx, game, stars);
     syncHud();
     syncOverlays();
+    watchSfx(now);
     if (paused && game.state === "playing") {
       ctx.save();
       ctx.fillStyle = "rgba(3,4,12,0.55)";
