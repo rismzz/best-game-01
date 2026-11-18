@@ -255,3 +255,37 @@ round 3: cap, cap, mati 155 dtk. Round 4: **cap, cap, mati 167 dtk**
    dengan kit CLI.
 3. Submit via kit sebagai round 4 sebelum **2026-11-19 01:00 WIB**
    (entries tutup 2026-11-18T18:00Z; kuota harian 5). Tidak ada entry fee.
+
+## PERBAIKAN KEMASAN — kontrak entry yang benar (2026-11-18, di atas commit round 4 `1639636`)
+
+**Penyebab round 1–4 tidak pernah dinilai juri:** `main.ts` lama merakit
+`index.html`+`sim.html` ke `/output` (kontrak kompetisi lain). Kontrak
+best-game-01 yang benar (competition.yaml + RULES.txt "The gate" +
+starter): `main.ts` menyalin `game/` dan `screenshots/` dari repo ke
+`/output` dan menulis `/output/dossier.json` via `buildDossier` dari
+`vendor/makefun-game.ts`. Tanpa `game/`, `screenshots/`, dan
+`dossier.json`, gate menyegel entry sebagai tidak valid (Valid 0) dan
+house judge tidak pernah menilainya — persis catatan status round 3.
+
+**Yang dilakukan (game TIDAK diubah sama sekali):**
+- `vendor/makefun-game.ts` — salinan byte-for-byte dari kit (terverifikasi `cmp`).
+- `game/game.js` + `game/page.css` — file root lama dipindah apa adanya
+  (sha256 identik dengan round 4: game.js `6b82accc…`, page.css `4f5549ef…`).
+- `game/index.html` — shell halaman yang sama persis dengan rakitan
+  `main.ts` lama (judul, tagline, canvas#game 1280×720, HUD, overlay
+  menu/levelup/gameover), kini memuat `page.css` via `<link>` dan
+  `game.js` via `<script src>`; tidak ada URL eksternal sama sekali.
+- `main.ts` BARU mengikuti starter kit: salin `game/` + `screenshots/`
+  ke `$MAKEFUN_OUTPUT_DIR` (default `/output`), tulis `dossier.json`
+  dengan caps gate (text 163840; screenshots max 4 × 262144; game max
+  993 file / 50331648 byte; path max 1000).
+- `screenshots/` — 4 render ASLI Chromium dari game yang dimainkan
+  (hook sim bawaan game + bot bawaannya, pola yang sama dengan
+  `shots.json` kit): `1-menu.jpg` (judul/cover), `2-play.jpg` (wave 2),
+  `3-battle.jpg` (wave 4), `4-gameover.jpg` (hasil akhir + restart);
+  semua 1280×720 JPEG ≤ 256 KiB.
+- Test repo disesuaikan jalurnya ke `game/game.js`: simulate 13/13 dan
+  browser-stub 10/10 tetap PASS — permainan identik dengan round 4.
+
+**Status: SIAP SUBMIT — menunggu agen utama** (usage rows, bundle, dan
+submit dilakukan agen utama). Kuota kompetisi: 5 entri/hari, 10 total.

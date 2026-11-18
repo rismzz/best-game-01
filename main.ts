@@ -1,114 +1,46 @@
 /*
- * VOID BLOOM — entrypoint for make.fun bounty best-game-01 (program/v1).
+ * VOID BLOOM — entrypoint for make.fun bounty best-game-01.
  *
- * The grader runs `node main.ts` (Node 22) in a sandbox with no network:
- * the repository is read-only at MAKEFUN_BOT_DIR and MAKEFUN_OUTPUT_DIR
- * is an empty writable directory. This program assembles the game into
- * that output directory:
+ * The game is this directory's game/ folder: plain static files a desktop
+ * browser loads offline (game/index.html, its stylesheet and its script —
+ * no library, no network request). This program hands it in: it copies
+ * game/ and screenshots/ from beside this file to the output directory
+ * and writes dossier.json there, the summary the judge reads, with the
+ * vendored make.fun library (vendor/makefun-game.ts, the kit's copy,
+ * unchanged).
  *
- *   index.html — the complete game (CSS + JS inlined, zero dependencies)
- *   sim.html   — the same game in bot auto-play mode; it publishes seeded
- *                simulation results into the page for play-test checks
- *
- * The build is deterministic: same sources in, byte-identical files out.
+ * The grader runs `node main.ts` (Node 22, standard library only).
+ * Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for
+ * /output:  mkdir -p out && MAKEFUN_OUTPUT_DIR=out node main.ts
  */
 
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { cpSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { buildDossier } from './vendor/makefun-game.ts';
 
-const botDir: string = process.env.MAKEFUN_BOT_DIR ?? dirname(fileURLToPath(import.meta.url));
-const outDir: string = process.env.MAKEFUN_OUTPUT_DIR ?? join(botDir, "out");
+const here = fileURLToPath(new URL('.', import.meta.url));
+const out = process.env.MAKEFUN_OUTPUT_DIR ?? '/output';
 
-const gameJs: string = readFileSync(join(botDir, "game.js"), "utf8");
-const pageCss: string = readFileSync(join(botDir, "page.css"), "utf8");
+mkdirSync(out, { recursive: true });
+cpSync(join(here, 'game'), join(out, 'game'), { recursive: true });
+mkdirSync(join(out, 'screenshots'), { recursive: true });
+if (existsSync(join(here, 'screenshots'))) cpSync(join(here, 'screenshots'), join(out, 'screenshots'), { recursive: true });
 
-const PAGE_SHELL = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Void Bloom — Neon Arena Survival</title>
-<style>
-__CSS__
-</style>
-</head>
-<body>
-<h1 class="title">VOID BLOOM</h1>
-<p class="tagline">The last Bloomkeeper against the Void. Harvest pollen. Grow. Survive.</p>
-<div id="stage">
-  <canvas id="game" width="1280" height="720"></canvas>
-  <div id="hud">
-    <div class="row">
-      <span class="stat" id="hud-hp-text">HP 5/5</span>
-      <div class="bar" style="flex:1"><div id="hud-hp"></div></div>
-      <span class="stat" id="hud-score">0</span>
-      <span class="stat" id="hud-combo"></span>
-      <span class="spacer"></span>
-      <span class="stat" id="hud-wave">WAVE 1</span>
-      <span class="stat" id="hud-time">0:00</span>
-    </div>
-    <div class="row">
-      <span class="stat" id="hud-level">LV 1</span>
-      <div class="bar" style="flex:1"><div id="hud-xp"></div></div>
-    </div>
-  </div>
-  <div class="overlay" id="menu">
-    <h2>VOID BLOOM</h2>
-    <p>You are the last <strong>Bloomkeeper</strong>. Shapes of the Void pour in, wave after
-       wave, to snuff out the garden. Shatter them, harvest their golden pollen, and spend
-       it on new blooms — twin shots, thorn pierce, an aegis bud — before the dark closes in.</p>
-    <p class="controls">
-      <strong>Move</strong> WASD / arrow keys &nbsp;·&nbsp; <strong>Aim</strong> mouse &nbsp;·&nbsp;
-      <strong>Fire</strong> hold mouse / Space &nbsp;·&nbsp; <strong>Dash</strong> Shift (briefly untouchable)<br>
-      <strong>Level up:</strong> click a bloom card or press 1–3 &nbsp;·&nbsp; <strong>Pause</strong> P &nbsp;·&nbsp;
-      <strong>Sound</strong> M to mute &nbsp;·&nbsp; Touch: drag to move, the Bloomkeeper auto-fires
-    </p>
-    <button class="cta" id="btn-start">START DEFENDING</button>
-  </div>
-  <div class="overlay" id="levelup">
-    <h3>CHOOSE A BLOOM</h3>
-    <div id="cards"></div>
-  </div>
-  <div class="overlay" id="gameover">
-    <h3>THE GARDEN GOES DARK</h3>
-    <p id="final-stats"></p>
-    <button class="cta" id="btn-again">BLOOM AGAIN (R)</button>
-  </div>
-</div>
-<footer class="note">
-  Void Bloom — an original game built by an AI agent for
-  <a href="https://make.fun/bounty/best-game-01">make.fun's "Make the best game" bounty</a>.
-  No downloads, no dependencies: this page is the whole game.
-</footer>
-__EXTRA__
-<script>
-__GAME_JS__
-</script>
-</body>
-</html>
-`;
+// The scorer's own caps (the kit's gate): only text_max_bytes shapes the
+// bytes; the others refuse an entry the scorer would refuse (more than 4
+// screenshots or one over 256 KiB; more than 993 files in game/ or 48 MiB
+// of game files in all, or a path under game/ over 1000 bytes).
+writeFileSync(
+  join(out, 'dossier.json'),
+  buildDossier(out, {
+    text_max_bytes: 163840,
+    screenshots: { max: 4, max_bytes: 262144 },
+    game_max_files: 993,
+    game_max_bytes: 50331648,
+    game_path_max_bytes: 1000,
+  }),
+);
 
-function build(extraHead: string, extraBody: string): string {
-  return PAGE_SHELL
-    .split("__CSS__").join(pageCss)
-    .split("__EXTRA__").join(extraBody)
-    .split("__GAME_JS__").join(gameJs)
-    .replace("<title>Void Bloom", extraHead + "<title>Void Bloom");
-}
-
-mkdirSync(outDir, { recursive: true });
-
-const indexHtml = build("", "");
-writeFileSync(join(outDir, "index.html"), indexHtml);
-
-const simScript =
-  '<script>window.__MAKEFUN_SIM__ = { seeds: [1337, 4242, 9001], maxSeconds: 300 };</script>\n' +
-  '<pre id="sim-report">running simulations...</pre>';
-const simHtml = build("", simScript);
-writeFileSync(join(outDir, "sim.html"), simHtml);
-
-console.log("VOID BLOOM build complete");
-console.log("wrote index.html (" + indexHtml.length + " bytes) — the playable game");
-console.log("wrote sim.html (" + simHtml.length + " bytes) — bot auto-play play-test page");
-console.log("open index.html in any desktop browser to play; no server or network needed");
+const shotCount = readdirSync(join(out, 'screenshots')).length;
+console.log('VOID BLOOM handed in: game/ copied, ' + shotCount + ' screenshot(s), dossier.json written to ' + out);

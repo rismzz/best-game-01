@@ -13,7 +13,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const code = readFileSync(join(here, "..", "game.js"), "utf8");
+const code = readFileSync(join(here, "..", "game", "game.js"), "utf8");
 
 const mod = { exports: {} };
 new Function("module", "exports", code)(mod, mod.exports);
